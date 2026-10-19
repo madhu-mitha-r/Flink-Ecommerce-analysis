@@ -23,8 +23,8 @@ SCENARIO_WEIGHTS = {
     "payment_before_order": 1,
 }
 
-PAYMENT_STATUS_WEIGHTS = {"SUCCESS": 90, "FAILED": 7, "PENDING": 3}
-PAYMENT_METHODS = ["credit_card", "debit_card", "upi", "paypal", "wallet"]
+PAYMENT_STATUS_WEIGHTS = {"SUCCESS": 80, "FAILED": 10, "PENDING": 3,"CANCELED":7}
+PAYMENT_METHODS = ["CREDIT_CARD", "DEBIT_CARD", "UPI", "PAYPAL", "WALLET"]
 
 PRODUCT_CATALOG = [
     {"productId": "p-101", "productName": "Wireless Mouse", "category": "electronics", "unitPrice": 24.99},
