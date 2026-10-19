@@ -21,6 +21,7 @@ package FlinkEcommerce;
 import FlinkEcommerce.deserializers.GeneralJsonDeserializer;
 import FlinkEcommerce.dtos.Order;
 import FlinkEcommerce.dtos.Payment;
+import java.time.Duration;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
@@ -45,7 +46,12 @@ public class DataStreamJob {
             .build();
 
     DataStream<Order> orderDataStream =
-        env.fromSource(orderKafkaSource, WatermarkStrategy.noWatermarks(), "order_events");
+        env.fromSource(
+            orderKafkaSource,
+            WatermarkStrategy.<Order>forBoundedOutOfOrderness(Duration.ofSeconds(10))
+                .withTimestampAssigner((element, recordTimestamp) -> element.getEventTime())
+                .withIdleness(Duration.ofSeconds(10)),
+            "order_events");
     orderDataStream.print();
 
     KafkaSource<Payment> paymentKafkaSource =
@@ -58,7 +64,12 @@ public class DataStreamJob {
             .build();
 
     DataStream<Payment> paymentDataStream =
-        env.fromSource(paymentKafkaSource, WatermarkStrategy.noWatermarks(), "payment_events");
+        env.fromSource(
+            paymentKafkaSource,
+            WatermarkStrategy.<Payment>forBoundedOutOfOrderness(Duration.ofSeconds(10))
+                .withTimestampAssigner((element, recordTimestamp) -> element.getEventTime())
+                .withIdleness(Duration.ofSeconds(10)),
+            "payment_events");
     paymentDataStream.print();
 
     env.execute("Flink E-commerce Analysis");
