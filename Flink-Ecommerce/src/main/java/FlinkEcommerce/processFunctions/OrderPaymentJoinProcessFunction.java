@@ -45,7 +45,7 @@ public class OrderPaymentJoinProcessFunction
     // first we get order and then payment , store the order in state, until we get a successful
     // payment
     orderState.update(order);
-    ctx.timerService().registerEventTimeTimer(order.getEventTime()+ PAYMENT_TIMEOUT_MS);
+    ctx.timerService().registerEventTimeTimer(order.getEventTime() + PAYMENT_TIMEOUT_MS);
   }
 
   @Override
@@ -59,7 +59,7 @@ public class OrderPaymentJoinProcessFunction
       return;
     }
     out.collect(PaidOrder.from(order, payment));
-    ctx.timerService().deleteEventTimeTimer(order.getEventTime()+ PAYMENT_TIMEOUT_MS);
+    ctx.timerService().deleteEventTimeTimer(order.getEventTime() + PAYMENT_TIMEOUT_MS);
     orderState.clear();
   }
 }

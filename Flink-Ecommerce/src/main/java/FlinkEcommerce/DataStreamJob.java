@@ -19,14 +19,14 @@
 package FlinkEcommerce;
 
 import FlinkEcommerce.deserializers.GeneralJsonDeserializer;
-import FlinkEcommerce.dtos.Order;
-import FlinkEcommerce.dtos.PaidOrder;
-import FlinkEcommerce.dtos.Payment;
+import FlinkEcommerce.dtos.*;
 import FlinkEcommerce.processFunctions.OrderPaymentJoinProcessFunction;
+import FlinkEcommerce.processFunctions.ProductEnrichmentFunction;
 import java.time.Duration;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -49,6 +49,24 @@ public class DataStreamJob {
             .setGroupId("flink-order-stream")
             .build();
 
+    KafkaSource<Payment> paymentKafkaSource =
+        KafkaSource.<Payment>builder()
+            .setBootstrapServers("localhost:9092")
+            .setTopics(paymentsTopic)
+            .setStartingOffsets(OffsetsInitializer.earliest())
+            .setValueOnlyDeserializer(new GeneralJsonDeserializer<>(Payment.class))
+            .setGroupId("flink-payment-stream")
+            .build();
+
+    KafkaSource<ProductCdcEvent> productCdcEventKafkaSource =
+        KafkaSource.<ProductCdcEvent>builder()
+            .setBootstrapServers("localhost:9092")
+            .setTopics("product_cdc")
+            .setStartingOffsets(OffsetsInitializer.earliest())
+            .setValueOnlyDeserializer(new GeneralJsonDeserializer<>(ProductCdcEvent.class))
+            .setGroupId("flink-product-cdc-stream")
+            .build();
+
     DataStream<Order> orderDataStream =
         env.fromSource(
             orderKafkaSource,
@@ -58,15 +76,6 @@ public class DataStreamJob {
                         element.getEventTime() == null ? recordTimestamp : element.getEventTime())
                 .withIdleness(Duration.ofSeconds(10)),
             "order_events");
-
-    KafkaSource<Payment> paymentKafkaSource =
-        KafkaSource.<Payment>builder()
-            .setBootstrapServers("localhost:9092")
-            .setTopics(paymentsTopic)
-            .setStartingOffsets(OffsetsInitializer.earliest())
-            .setValueOnlyDeserializer(new GeneralJsonDeserializer<>(Payment.class))
-            .setGroupId("flink-payment-stream")
-            .build();
 
     DataStream<Payment> paymentDataStream =
         env.fromSource(
@@ -78,6 +87,16 @@ public class DataStreamJob {
                 .withIdleness(Duration.ofSeconds(10)),
             "payment_events");
 
+    DataStream<ProductCdcEvent> productCdcEventDataStream =
+        env.fromSource(
+            productCdcEventKafkaSource,
+            WatermarkStrategy.<ProductCdcEvent>forMonotonousTimestamps()
+                .withTimestampAssigner(
+                    (element, recordTimestamp) ->
+                        element.getTsMs() == null ? recordTimestamp : element.getTsMs())
+                .withIdleness(Duration.ofSeconds(10)),
+            "product_cdc_events");
+
     SingleOutputStreamOperator<PaidOrder> paidOrderStream =
         orderDataStream
             .keyBy(Order::getOrderId)
@@ -87,6 +106,17 @@ public class DataStreamJob {
 
     paidOrderStream.print("PAID");
     paidOrderStream.getSideOutput(OrderPaymentJoinProcessFunction.ABANDONED).print("ABANDONED");
+
+    BroadcastStream<ProductCdcEvent> productCdcEventBroadcastStream =
+        productCdcEventDataStream.broadcast(ProductEnrichmentFunction.PRODUCTS);
+
+    SingleOutputStreamOperator<SoldItem> soldItemSingleOutputStream =
+        paidOrderStream
+            .connect(productCdcEventBroadcastStream)
+            .process(new ProductEnrichmentFunction())
+            .uid("product-enrichment");
+
+    soldItemSingleOutputStream.print("SoldItem");
 
     env.execute("Flink E-commerce Analysis");
   }

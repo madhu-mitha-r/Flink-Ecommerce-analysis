@@ -8,11 +8,13 @@ import uuid
 from confluent_kafka import Producer
 from faker import Faker
 
-from create_topics import BOOTSTRAP_SERVERS, ORDERS_TOPIC, PAYMENTS_TOPIC, create_orders_and_payments_topics
+from create_topics import BOOTSTRAP_SERVERS, ORDERS_TOPIC, PAYMENTS_TOPIC, PRODUCT_CDC_TOPIC, create_topics
 
 ORDERS_PER_SECOND = 5
 PAYMENT_TIMEOUT_SEC = 60
 NUM_CUSTOMERS = 200
+PRODUCT_CHANGE_INTERVAL_SEC = 30
+MIN_CATALOG_SIZE = 5
 
 SCENARIO_WEIGHTS = {
     "normal": 85,
@@ -26,22 +28,28 @@ SCENARIO_WEIGHTS = {
 PAYMENT_STATUS_WEIGHTS = {"SUCCESS": 80, "FAILED": 10, "PENDING": 3,"CANCELED":7}
 PAYMENT_METHODS = ["CREDIT_CARD", "DEBIT_CARD", "UPI", "PAYPAL", "WALLET"]
 
-PRODUCT_CATALOG = [
-    {"productId": "p-101", "productName": "Wireless Mouse", "category": "electronics", "unitPrice": 24.99},
-    {"productId": "p-102", "productName": "Mechanical Keyboard", "category": "electronics", "unitPrice": 89.00},
-    {"productId": "p-103", "productName": "USB-C Charger", "category": "electronics", "unitPrice": 19.49},
-    {"productId": "p-201", "productName": "Running Shoes", "category": "fashion", "unitPrice": 74.95},
-    {"productId": "p-202", "productName": "Denim Jacket", "category": "fashion", "unitPrice": 59.90},
-    {"productId": "p-301", "productName": "Notebook A5", "category": "stationery", "unitPrice": 3.50},
-    {"productId": "p-302", "productName": "Gel Pen Pack", "category": "stationery", "unitPrice": 6.25},
-    {"productId": "p-401", "productName": "Coffee Beans 1kg", "category": "grocery", "unitPrice": 18.75},
-    {"productId": "p-402", "productName": "Green Tea 100 bags", "category": "grocery", "unitPrice": 7.99},
-    {"productId": "p-501", "productName": "Yoga Mat", "category": "sports", "unitPrice": 29.00},
+PRODUCT_CHANGE_WEIGHTS = {"u": 80, "c": 15, "d": 5}
+CATEGORIES = ["electronics", "fashion", "stationery", "grocery", "sports", "home"]
+BRANDS = ["Logitech", "Anker", "Nike", "Levis", "Classmate", "Pilot", "Lavazza", "Lipton", "Decathlon", "Ikea"]
+
+INITIAL_CATALOG = [
+    {"productId": "p-101", "productName": "Wireless Mouse", "category": "electronics", "brand": "Logitech", "unitPrice": 24.99},
+    {"productId": "p-102", "productName": "Mechanical Keyboard", "category": "electronics", "brand": "Logitech", "unitPrice": 89.00},
+    {"productId": "p-103", "productName": "USB-C Charger", "category": "electronics", "brand": "Anker", "unitPrice": 19.49},
+    {"productId": "p-201", "productName": "Running Shoes", "category": "fashion", "brand": "Nike", "unitPrice": 74.95},
+    {"productId": "p-202", "productName": "Denim Jacket", "category": "fashion", "brand": "Levis", "unitPrice": 59.90},
+    {"productId": "p-301", "productName": "Notebook A5", "category": "stationery", "brand": "Classmate", "unitPrice": 3.50},
+    {"productId": "p-302", "productName": "Gel Pen Pack", "category": "stationery", "brand": "Pilot", "unitPrice": 6.25},
+    {"productId": "p-401", "productName": "Coffee Beans 1kg", "category": "grocery", "brand": "Lavazza", "unitPrice": 18.75},
+    {"productId": "p-402", "productName": "Green Tea 100 bags", "category": "grocery", "brand": "Lipton", "unitPrice": 7.99},
+    {"productId": "p-501", "productName": "Yoga Mat", "category": "sports", "brand": "Decathlon", "unitPrice": 29.00},
 ]
 
 fake = Faker()
 pending = []
 sequence = itertools.count()
+catalog = {}
+new_product_ids = itertools.count(601)
 
 
 def now_ms():
@@ -54,8 +62,11 @@ def weighted_choice(weights):
 
 
 def generate_order():
-    products = random.sample(PRODUCT_CATALOG, k=random.randint(1, 4))
-    items = [{**product, "quantity": random.randint(1, 5)} for product in products]
+    products = random.sample(list(catalog.values()), k=random.randint(1, 4))
+    items = [
+        {"productId": product["productId"], "unitPrice": product["unitPrice"], "quantity": random.randint(1, 5)}
+        for product in products
+    ]
     total_amount = round(sum(item["quantity"] * item["unitPrice"] for item in items), 2)
     return {
         "orderId": f"ord-{uuid.uuid4().hex[:12]}",
@@ -80,6 +91,52 @@ def generate_payment(order, delay_sec, amount=None):
     }
 
 
+def product_cdc_event(op, before, after):
+    return {"op": op, "before": before, "after": after, "ts_ms": now_ms()}
+
+
+def send_product_snapshot(producer):
+    for product in INITIAL_CATALOG:
+        row = {**product, "updatedAt": now_ms()}
+        catalog[row["productId"]] = row
+        send(producer, PRODUCT_CDC_TOPIC, row["productId"], product_cdc_event("r", None, row))
+    producer.flush(10)
+
+
+def send_product_change(producer):
+    op = weighted_choice(PRODUCT_CHANGE_WEIGHTS)
+    if op == "d" and len(catalog) <= MIN_CATALOG_SIZE:
+        op = "u"
+
+    if op == "c":
+        row = {
+            "productId": f"p-{next(new_product_ids)}",
+            "productName": fake.catch_phrase(),
+            "category": random.choice(CATEGORIES),
+            "brand": random.choice(BRANDS),
+            "unitPrice": round(random.uniform(2, 150), 2),
+            "updatedAt": now_ms(),
+        }
+        catalog[row["productId"]] = row
+        send(producer, PRODUCT_CDC_TOPIC, row["productId"], product_cdc_event("c", None, row))
+        return
+
+    before = random.choice(list(catalog.values()))
+    if op == "d":
+        del catalog[before["productId"]]
+        send(producer, PRODUCT_CDC_TOPIC, before["productId"], product_cdc_event("d", before, None))
+        return
+
+    field = random.choice(["category", "brand", "unitPrice"])
+    if field == "unitPrice":
+        new_value = round(before["unitPrice"] * random.uniform(0.8, 1.2), 2)
+    else:
+        new_value = random.choice([v for v in (CATEGORIES if field == "category" else BRANDS) if v != before[field]])
+    after = {**before, field: new_value, "updatedAt": now_ms()}
+    catalog[after["productId"]] = after
+    send(producer, PRODUCT_CDC_TOPIC, after["productId"], product_cdc_event("u", before, after))
+
+
 def schedule(delay_sec, topic, record):
     heapq.heappush(pending, (time.time() + delay_sec, next(sequence), topic, record))
 
@@ -90,11 +147,11 @@ def schedule_order_and_payment(producer):
 
     if scenario == "payment_before_order":
         payment = generate_payment(order, delay_sec=random.uniform(1, 3))
-        send(producer, PAYMENTS_TOPIC, payment)
+        send(producer, PAYMENTS_TOPIC, payment["orderId"], payment)
         schedule(random.uniform(3, 6), ORDERS_TOPIC, order)
         return
 
-    send(producer, ORDERS_TOPIC, order)
+    send(producer, ORDERS_TOPIC, order["orderId"], order)
 
     if scenario == "abandoned":
         return
@@ -118,7 +175,7 @@ def schedule_order_and_payment(producer):
 def send_due(producer):
     while pending and pending[0][0] <= time.time():
         _, _, topic, record = heapq.heappop(pending)
-        send(producer, topic, record)
+        send(producer, topic, record["orderId"], record)
 
 
 def delivery_report(err, msg):
@@ -131,12 +188,11 @@ def delivery_report(err, msg):
     )
 
 
-def send(producer, topic, record):
-    key = record["orderId"].encode()
+def send(producer, topic, key, record):
     value = json.dumps(record).encode()
     while True:
         try:
-            producer.produce(topic, key=key, value=value, callback=delivery_report)
+            producer.produce(topic, key=key.encode(), value=value, callback=delivery_report)
             break
         except BufferError:
             producer.poll(1)
@@ -144,7 +200,7 @@ def send(producer, topic, record):
 
 
 def main():
-    create_orders_and_payments_topics()
+    create_topics()
     producer = Producer(
         {
             "bootstrap.servers": BOOTSTRAP_SERVERS,
@@ -153,10 +209,15 @@ def main():
             "linger.ms": 5,
         }
     )
+    send_product_snapshot(producer)
+    next_product_change = time.time() + PRODUCT_CHANGE_INTERVAL_SEC
     try:
         while True:
             schedule_order_and_payment(producer)
             send_due(producer)
+            if time.time() >= next_product_change:
+                send_product_change(producer)
+                next_product_change = time.time() + PRODUCT_CHANGE_INTERVAL_SEC
             time.sleep(1 / ORDERS_PER_SECOND)
     except KeyboardInterrupt:
         print(f"stopping, {len(pending)} scheduled messages not sent", flush=True)
