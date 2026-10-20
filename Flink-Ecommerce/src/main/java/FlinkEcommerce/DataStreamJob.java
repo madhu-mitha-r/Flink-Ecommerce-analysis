@@ -20,18 +20,22 @@ package FlinkEcommerce;
 
 import FlinkEcommerce.deserializers.GeneralJsonDeserializer;
 import FlinkEcommerce.dtos.Order;
+import FlinkEcommerce.dtos.PaidOrder;
 import FlinkEcommerce.dtos.Payment;
+import FlinkEcommerce.processFunctions.OrderPaymentJoinProcessFunction;
 import java.time.Duration;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
 public class DataStreamJob {
 
   public static void main(String[] args) throws Exception {
     final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    env.setParallelism(3);
 
     final String ordersTopic = "orders";
     final String paymentsTopic = "payments";
@@ -49,10 +53,11 @@ public class DataStreamJob {
         env.fromSource(
             orderKafkaSource,
             WatermarkStrategy.<Order>forBoundedOutOfOrderness(Duration.ofSeconds(10))
-                .withTimestampAssigner((element, recordTimestamp) -> element.getEventTime())
+                .withTimestampAssigner(
+                    (element, recordTimestamp) ->
+                        element.getEventTime() == null ? recordTimestamp : element.getEventTime())
                 .withIdleness(Duration.ofSeconds(10)),
             "order_events");
-    orderDataStream.print();
 
     KafkaSource<Payment> paymentKafkaSource =
         KafkaSource.<Payment>builder()
@@ -67,10 +72,21 @@ public class DataStreamJob {
         env.fromSource(
             paymentKafkaSource,
             WatermarkStrategy.<Payment>forBoundedOutOfOrderness(Duration.ofSeconds(10))
-                .withTimestampAssigner((element, recordTimestamp) -> element.getEventTime())
+                .withTimestampAssigner(
+                    (element, recordTimestamp) ->
+                        element.getEventTime() == null ? recordTimestamp : element.getEventTime())
                 .withIdleness(Duration.ofSeconds(10)),
             "payment_events");
-    paymentDataStream.print();
+
+    SingleOutputStreamOperator<PaidOrder> paidOrderStream =
+        orderDataStream
+            .keyBy(Order::getOrderId)
+            .connect(paymentDataStream.keyBy(Payment::getOrderId))
+            .process(new OrderPaymentJoinProcessFunction())
+            .uid("order-payment-join");
+
+    paidOrderStream.print("PAID");
+    paidOrderStream.getSideOutput(OrderPaymentJoinProcessFunction.ABANDONED).print("ABANDONED");
 
     env.execute("Flink E-commerce Analysis");
   }
