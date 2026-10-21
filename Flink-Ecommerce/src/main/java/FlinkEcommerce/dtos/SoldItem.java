@@ -1,5 +1,6 @@
 package FlinkEcommerce.dtos;
 
+import java.math.BigDecimal;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -19,5 +20,5 @@ public class SoldItem {
   private String productCategory;
   private String productBrand;
 
-  private double totalPrice;
+  private BigDecimal totalPrice = BigDecimal.ZERO;
 }

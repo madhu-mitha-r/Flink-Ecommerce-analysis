@@ -1,6 +1,8 @@
 package FlinkEcommerce.processFunctions;
 
 import FlinkEcommerce.dtos.*;
+
+import java.math.BigDecimal;
 import java.util.List;
 import org.apache.flink.api.common.state.BroadcastState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
@@ -46,7 +48,7 @@ public class ProductEnrichmentFunction
       soldItem.setProductBrand(product.getBrand());
       soldItem.setProductName(product.getProductName());
       soldItem.setProductPrice(product.getUnitPrice());
-      soldItem.setTotalPrice(orderItem.getUnitPrice() * orderItem.getQuantity());
+      soldItem.setTotalPrice(BigDecimal.valueOf(orderItem.getUnitPrice()).multiply(BigDecimal.valueOf(orderItem.getQuantity())));
 
       out.collect(soldItem);
     }

@@ -22,6 +22,8 @@ import FlinkEcommerce.deserializers.GeneralJsonDeserializer;
 import FlinkEcommerce.dtos.*;
 import FlinkEcommerce.processFunctions.OrderPaymentJoinProcessFunction;
 import FlinkEcommerce.processFunctions.ProductEnrichmentFunction;
+import FlinkEcommerce.processFunctions.RevenuePerCategoryAggregateFunction;
+import FlinkEcommerce.processFunctions.RevenuePerCategoryWindowProcessFunction;
 import java.time.Duration;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
@@ -30,6 +32,7 @@ import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 
 public class DataStreamJob {
 
@@ -104,8 +107,8 @@ public class DataStreamJob {
             .process(new OrderPaymentJoinProcessFunction())
             .uid("order-payment-join");
 
-    paidOrderStream.print("PAID");
-    paidOrderStream.getSideOutput(OrderPaymentJoinProcessFunction.ABANDONED).print("ABANDONED");
+//    paidOrderStream.print("PAID");
+//    paidOrderStream.getSideOutput(OrderPaymentJoinProcessFunction.ABANDONED).print("ABANDONED");
 
     BroadcastStream<ProductCdcEvent> productCdcEventBroadcastStream =
         productCdcEventDataStream.broadcast(ProductEnrichmentFunction.PRODUCTS);
@@ -116,7 +119,18 @@ public class DataStreamJob {
             .process(new ProductEnrichmentFunction())
             .uid("product-enrichment");
 
-    soldItemSingleOutputStream.print("SoldItem");
+//    soldItemSingleOutputStream.print("SoldItem");
+
+    SingleOutputStreamOperator<RevenuePerCategory> revenuePerCategoryDataStream =
+        soldItemSingleOutputStream
+            .keyBy(SoldItem::getProductCategory)
+            .window(TumblingEventTimeWindows.of(Duration.ofMinutes(1)))
+            .aggregate(
+                new RevenuePerCategoryAggregateFunction(),
+                new RevenuePerCategoryWindowProcessFunction())
+            .uid("revenue-per-category");
+
+    revenuePerCategoryDataStream.print("RevenuePerCategory");
 
     env.execute("Flink E-commerce Analysis");
   }
