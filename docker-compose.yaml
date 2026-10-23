@@ -17,19 +17,21 @@ services:
       - "5432:5432"
     volumes:
       - postgres_ecommerce_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.23
-    container_name: ecommerce-elasticsearch
-    environment:
-      discovery.type: single-node
-      xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+  grafana:
+    image: grafana/grafana:13.2.4
+    container_name: ecommerce-grafana
     ports:
-      - "9200:9200"
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
-      - es_ecommerce_data:/usr/share/elasticsearch/data
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - postgres
 
 volumes:
     postgres_ecommerce_data:
-    es_ecommerce_data:
+    grafana_data:

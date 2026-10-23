@@ -77,15 +77,15 @@ under the License.
 		</dependency>
 
 		<dependency>
-			<groupId>org.postgresql</groupId>
-			<artifactId>postgresql</artifactId>
-			<version>42.6.0</version>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-connector-jdbc-postgres</artifactId>
+			<version>4.1.0-2.2</version>
 		</dependency>
 
 		<dependency>
-			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-sql-connector-elasticsearch7</artifactId>
-			<version>3.0.1-1.17</version>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<version>42.7.14</version>
 		</dependency>
 
 		<dependency>

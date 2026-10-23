@@ -3,7 +3,6 @@ package FlinkEcommerce.processFunctions;
 import FlinkEcommerce.dtos.RevenuePerCategory;
 import FlinkEcommerce.dtos.RevenuePerCategoryAccumulator;
 import FlinkEcommerce.dtos.SoldItem;
-import java.math.BigDecimal;
 import org.apache.flink.api.common.functions.AggregateFunction;
 
 public class RevenuePerCategoryAggregateFunction
@@ -18,8 +17,7 @@ public class RevenuePerCategoryAggregateFunction
   public RevenuePerCategoryAccumulator add(
       SoldItem soldItem, RevenuePerCategoryAccumulator accumulator) {
     accumulator.setProductCategory(soldItem.getProductCategory());
-    accumulator.setRevenue(
-        accumulator.getRevenue().add(soldItem.getTotalPrice()));
+    accumulator.setRevenue(accumulator.getRevenue().add(soldItem.getTotalPrice()));
     accumulator.setUnitsSold(accumulator.getUnitsSold() + soldItem.getQuantity());
     return accumulator;
   }
