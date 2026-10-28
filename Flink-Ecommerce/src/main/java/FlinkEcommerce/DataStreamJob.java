@@ -130,12 +130,11 @@ public class DataStreamJob {
         orderDataStream
             .keyBy(Order::getOrderId)
             .connect(paymentDataStream.keyBy(Payment::getOrderId))
-            .process(new OrderPaymentJoinProcessFunction())
+            .process(new OrderPaymentJoinProcessFunction(Duration.ofSeconds(60)))
             .uid("order-payment-join");
 
     //    paidOrderStream.print("PAID");
-    //
-    // paidOrderStream.getSideOutput(OrderPaymentJoinProcessFunction.ABANDONED).print("ABANDONED");
+    paidOrderStream.getSideOutput(OrderPaymentJoinProcessFunction.ANOMALIES).print("ANOMALY");
 
     BroadcastStream<ProductCdcEvent> productCdcEventBroadcastStream =
         productCdcEventDataStream.broadcast(ProductEnrichmentFunction.PRODUCTS);

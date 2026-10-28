@@ -17,12 +17,14 @@ PRODUCT_CHANGE_INTERVAL_SEC = 30
 MIN_CATALOG_SIZE = 5
 
 SCENARIO_WEIGHTS = {
-    "normal": 85,
+    "normal": 82,
     "abandoned": 5,
     "late_payment": 4,
     "duplicate_payment": 3,
     "amount_mismatch": 2,
+    "double_charge": 2,
     "payment_before_order": 1,
+    "orphan_payment": 1,
 }
 
 PAYMENT_STATUS_WEIGHTS = {"SUCCESS": 80, "FAILED": 10, "PENDING": 3,"CANCELED":7}
@@ -79,13 +81,13 @@ def generate_order():
     }
 
 
-def generate_payment(order, delay_sec, amount=None):
+def generate_payment(order, delay_sec, amount=None, status=None):
     return {
         "orderId": order["orderId"],
         "transactionId": f"txn-{uuid.uuid4().hex[:12]}",
         "eventTime": order["eventTime"] + int(delay_sec * 1000),
         "method": random.choice(PAYMENT_METHODS),
-        "status": weighted_choice(PAYMENT_STATUS_WEIGHTS),
+        "status": status or weighted_choice(PAYMENT_STATUS_WEIGHTS),
         "amount": order["totalAmount"] if amount is None else amount,
         "currency": order["currency"],
     }
@@ -150,6 +152,10 @@ def schedule_order_and_payment(producer):
         send(producer, PAYMENTS_TOPIC, payment["orderId"], payment)
         schedule(random.uniform(3, 6), ORDERS_TOPIC, order)
         return
+    if scenario == "orphan_payment":
+        payment = generate_payment(order, delay_sec=0, status="SUCCESS")
+        send(producer, PAYMENTS_TOPIC, payment["orderId"], payment)
+        return
 
     send(producer, ORDERS_TOPIC, order["orderId"], order)
 
@@ -163,6 +169,12 @@ def schedule_order_and_payment(producer):
         delay = random.uniform(1, 10)
         wrong_amount = round(order["totalAmount"] * random.uniform(0.5, 0.95), 2)
         schedule(delay, PAYMENTS_TOPIC, generate_payment(order, delay, amount=wrong_amount))
+        return
+    if scenario == "double_charge":
+        delay = random.uniform(1, 10)
+        schedule(delay, PAYMENTS_TOPIC, generate_payment(order, delay, status="SUCCESS"))
+        second_delay = delay + random.uniform(0.5, 3)
+        schedule(second_delay, PAYMENTS_TOPIC, generate_payment(order, second_delay, status="SUCCESS"))
         return
 
     delay = random.uniform(1, 10)
